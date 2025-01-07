@@ -1,6 +1,6 @@
 import requests
-import json
 import time
+import logging
 
 # Configuration
 TAUTULLI_API_URL = "http://<TAUTULLI_SERVER_IP>:<TAUTULLI_PORT>/api/v2"
@@ -8,149 +8,152 @@ TAUTULLI_API_KEY = "<YOUR_TAUTULLI_API_KEY>"
 SONARR_API_URL = "http://<SONARR_SERVER_IP>:<SONARR_PORT>/api/v3"
 SONARR_API_KEY = "<YOUR_SONARR_API_KEY>"
 
-# Function to get current activity from Tautulli
+# Customizable settings
+MONITOR_ENTIRE_SEASON = False  # Monitor the entire season if True
+EPISODES_TO_MONITOR = 5  # Number of episodes to monitor after the current one
+WATCHED_PERCENTAGE = 70  # Trigger when watched percentage exceeds this
+
+# Logging configuration
+LOG_FILE = "chronicle.log"
+logging.basicConfig(
+    filename=LOG_FILE,
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+def log_info(message):
+    logging.info(message)
+    print(message)
+
+def log_error(message):
+    logging.error(message)
+    print(message)
+
 def get_current_activity():
-    params = {
-        'apikey': TAUTULLI_API_KEY,
-        'cmd': 'get_activity'
-    }
-    print("Fetching current activity from Tautulli...")
-    response = requests.get(TAUTULLI_API_URL, params=params)
-    print(f"Tautulli Response Code: {response.status_code}")
-    if response.status_code != 200:
-        print("Failed to fetch current activity.")
-        print(response.text)
+    """Fetches current activity from Tautulli."""
+    try:
+        params = {'apikey': TAUTULLI_API_KEY, 'cmd': 'get_activity'}
+        response = requests.get(TAUTULLI_API_URL, params=params, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        log_error(f"Error fetching activity from Tautulli: {e}")
         return None
-    return response.json()
 
-# Function to get the Sonarr download queue
 def get_download_queue():
-    print("Fetching download queue from Sonarr...")
-    response = requests.get(f"{SONARR_API_URL}/queue", headers={"X-Api-Key": SONARR_API_KEY})
-    if response.status_code != 200:
-        print("Failed to fetch download queue.")
-        print(response.text)
+    """Fetches the Sonarr download queue."""
+    try:
+        response = requests.get(f"{SONARR_API_URL}/queue", headers={"X-Api-Key": SONARR_API_KEY}, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        log_error(f"Error fetching Sonarr download queue: {e}")
         return []
-    return response.json()
 
-# Function to monitor the next 5 episodes
 def monitor_next_episodes(series_id, current_episode, season_number, download_queue):
-    print(f"Enabling monitoring for the next 5 episodes starting from Episode {current_episode + 1} in Season {season_number}...")
-    episodes_response = requests.get(f"{SONARR_API_URL}/episode",
-                                     headers={"X-Api-Key": SONARR_API_KEY},
-                                     params={"seriesId": series_id})
-    print(f"Sonarr Episodes Response Code: {episodes_response.status_code}")
-    if episodes_response.status_code != 200:
-        print("Failed to fetch episodes from Sonarr.")
-        print(episodes_response.text)
-        return False
+    """Enables monitoring and triggers search for the next episodes."""
+    try:
+        episodes_response = requests.get(
+            f"{SONARR_API_URL}/episode",
+            headers={"X-Api-Key": SONARR_API_KEY},
+            params={"seriesId": series_id},
+            timeout=10
+        )
+        episodes_response.raise_for_status()
+        episodes = episodes_response.json()
 
-    episodes = episodes_response.json()
-    to_update = []
+        episodes_to_update = [
+            ep for ep in episodes
+            if ep['seasonNumber'] == season_number
+            and current_episode < ep['episodeNumber'] <= current_episode + EPISODES_TO_MONITOR
+            and not ep['hasFile']
+            and ep['id'] not in [item['episodeId'] for item in download_queue if 'episodeId' in item]
+        ]
 
-    for ep in episodes:
-        if ep['seasonNumber'] == season_number and current_episode < ep['episodeNumber'] <= current_episode + 5:
-            if not ep['hasFile'] and not ep.get('episodeFileId', 0):  # Only update if the episode is not downloaded
-                if ep['id'] not in [q['episodeId'] for q in download_queue if 'episodeId' in q]:
-                    to_update.append({"id": ep["id"], "monitored": True})
-
-    if to_update:
-        print(f"Updating monitoring for {len(to_update)} episodes...")
-        for episode in to_update:
+        for ep in episodes_to_update:
             payload = {"monitored": True}
-            update_response = requests.put(f"{SONARR_API_URL}/episode/{episode['id']}",
-                                           headers={"X-Api-Key": SONARR_API_KEY},
-                                           json=payload)
-            print(f"Update Response for Episode {episode['id']}: {update_response.status_code}")
-            if update_response.status_code != 200:
-                print(f"Failed to update monitoring for Episode {episode['id']}.")
-                print(update_response.text)
+            update_response = requests.put(
+                f"{SONARR_API_URL}/episode/{ep['id']}",
+                headers={"X-Api-Key": SONARR_API_KEY},
+                json=payload
+            )
+            update_response.raise_for_status()
 
-        print(f"Monitoring enabled for the next 5 episodes starting from Episode {current_episode + 1}.")
+        if episodes_to_update:
+            log_info(f"Monitoring enabled for {len(episodes_to_update)} episodes starting from Episode {current_episode + 1}.")
+            search_payload = {"name": "EpisodeSearch", "seriesId": series_id, "episodeIds": [ep['id'] for ep in episodes_to_update]}
+            search_response = requests.post(
+                f"{SONARR_API_URL}/command",
+                headers={"X-Api-Key": SONARR_API_KEY},
+                json=search_payload
+            )
+            search_response.raise_for_status()
+            log_info("Search triggered for monitored episodes.")
+        else:
+            log_info("No new episodes to monitor or search.")
+    except requests.exceptions.RequestException as e:
+        log_error(f"Error during monitor or search process: {e}")
 
-    # Trigger search for these episodes
-    print(f"Triggering search for the next 5 episodes starting from Episode {current_episode + 1}...")
-    search_payload = {"name": "EpisodeSearch", "seriesId": series_id, "episodeIds": [ep['id'] for ep in to_update]}
-    search_response = requests.post(f"{SONARR_API_URL}/command", 
-                                    headers={"X-Api-Key": SONARR_API_KEY}, 
-                                    json=search_payload)
-    print(f"Search Response Code: {search_response.status_code}")
-    if search_response.status_code == 200:
-        print(f"Search triggered for the next 5 episodes.")
-    else:
-        print("Failed to trigger search for the next 5 episodes.")
-        print(search_response.text)
-
-    return True
-
-# Main logic
 def main():
     while True:
-        print("Checking current activity...")
+        log_info("Checking current activity...")
         activity = get_current_activity()
-        if not activity:
-            print("No activity data received from Tautulli.")
-        else:
-            download_queue = get_download_queue()
-            for stream in activity['response']['data']['sessions']:
-                if stream['media_type'] == 'episode':
-                    tvdb_id = int(stream['grandparent_rating_key'])  # TVDB ID from Tautulli
-                    title = stream['grandparent_title']
-                    season_number = int(stream['parent_media_index'])
-                    current_episode = int(stream['media_index'])
+        if not activity or 'response' not in activity or 'data' not in activity['response'] or not activity['response']['data']['sessions']:
+            log_info("No active sessions found. Sleeping for 60 seconds...")
+            time.sleep(60)
+            continue
 
-                    print(f"Processing show: {title}, Season: {season_number}, Current Episode: {current_episode}")
+        sessions = activity['response']['data']['sessions']
+        log_info(f"Active sessions found: {len(sessions)}")
+        download_queue = get_download_queue()
 
-                    # Try to look up series by TVDB ID
-                    response = requests.get(f"{SONARR_API_URL}/series/lookup", 
-                                            headers={"X-Api-Key": SONARR_API_KEY}, 
-                                            params={"term": f"tvdb:{tvdb_id}"})
-                    print(f"Sonarr Lookup Response Code: {response.status_code}")
-                    if response.status_code != 200:
-                        print("Failed to lookup series in Sonarr by TVDB ID.")
-                        continue
+        for session in sessions:
+            if session.get('media_type') != 'episode':
+                continue
 
-                    series = response.json()
+            progress = int(session.get('progress_percent', 0))
+            if progress < WATCHED_PERCENTAGE:
+                continue
 
-                    # Strict filtering for tvdbId and title matching
-                    series = [
-                        s for s in series 
-                        if s.get("tvdbId") == tvdb_id and title.lower() == s.get("title", "").lower()
-                    ]
+            title = session.get('grandparent_title', "Unknown Title")
+            season_number = int(session.get('parent_media_index', 0))
+            current_episode = int(session.get('media_index', 0))
+            tvdb_id = session.get('grandparent_rating_key')
 
-                    if not series:
-                        print(f"No exact match for TVDB ID: {tvdb_id}. Trying to lookup by title: {title}...")
-                        response = requests.get(f"{SONARR_API_URL}/series/lookup", 
-                                                headers={"X-Api-Key": SONARR_API_KEY}, 
-                                                params={"term": title})
-                        print(f"Sonarr Title Lookup Response Code: {response.status_code}")
-                        if response.status_code != 200:
-                            print("Failed to lookup series in Sonarr by title.")
-                            continue
+            log_info(f"Processing: {title}, Season {season_number}, Episode {current_episode} - {progress}% watched.")
 
-                        # Log all results for debugging
-                        title_results = response.json()
-                        print(f"Title Search Results: {json.dumps(title_results, indent=2)}")
+            try:
+                series_response = requests.get(
+                    f"{SONARR_API_URL}/series/lookup",
+                    headers={"X-Api-Key": SONARR_API_KEY},
+                    params={"term": f"tvdb:{tvdb_id}"}
+                )
+                series_response.raise_for_status()
+                series_data = series_response.json()
 
-                        # Strict matching by title
-                        series = [
-                            s for s in title_results
-                            if title.lower() == s.get("title", "").lower()
-                        ]
+                matching_series = next((s for s in series_data if s.get('tvdbId') == int(tvdb_id)), None)
 
-                    if not series:
-                        print(f"Series not found in Sonarr by either TVDB ID: {tvdb_id} or title: {title}.")
-                        continue
+                if not matching_series:
+                    log_info(f"No exact match for TVDB ID: {tvdb_id}. Trying to lookup by title: {title}...")
+                    title_response = requests.get(
+                        f"{SONARR_API_URL}/series/lookup",
+                        headers={"X-Api-Key": SONARR_API_KEY},
+                        params={"term": title}
+                    )
+                    title_response.raise_for_status()
+                    title_results = title_response.json()
 
-                    # Validate series result
-                    series_id = series[0].get('id') if series and 'id' in series[0] else None
-                    if not series_id:
-                        print(f"Series lookup result does not contain a valid ID. Skipping: {series[0]}")
-                        continue
+                    matching_series = next((s for s in title_results if s.get('title', '').lower() == title.lower()), None)
 
-                    if monitor_next_episodes(series_id, current_episode, season_number, download_queue):
-                        print(f"Monitoring and search enabled for the next 5 episodes of {title}, Season {season_number}.")
-        print("Sleeping for 60 seconds...")
+                if matching_series:
+                    series_id = matching_series['id']
+                    monitor_next_episodes(series_id, current_episode, season_number, download_queue)
+                else:
+                    log_info(f"Series not found in Sonarr for TVDB ID {tvdb_id} or title {title}. Skipping...")
+            except requests.exceptions.RequestException as e:
+                log_error(f"Error processing session: {e}")
+
+        log_info("Sleeping for 60 seconds...")
         time.sleep(60)
 
 if __name__ == "__main__":
