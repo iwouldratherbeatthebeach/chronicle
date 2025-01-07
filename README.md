@@ -2,7 +2,7 @@
 
 Created due to server size constraints but wanting to grow my library ever-more.
 
-This Python script integrates **Tautulli** and **Sonarr** to automate the monitoring and searching of TV series episodes based on user activity. It identifies TV shows being watched in Tautulli and ensures the corresponding episodes and subsequent episodes are monitored and searched in Sonarr. T
+This Python script integrates **Tautulli** and **Sonarr** to automate the monitoring and searching of TV series episodes based on user activity. It identifies TV shows being watched in Tautulli and ensures the corresponding episodes and subsequent episodes are monitored and searched in Sonarr.
 
 ---
 
