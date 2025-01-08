@@ -14,7 +14,7 @@ EPISODES_TO_MONITOR = 5  # Number of episodes to monitor after the current one
 WATCHED_PERCENTAGE = 70  # Trigger when watched percentage exceeds this
 
 # Logging configuration
-LOG_FILE = "tautulli_sonarr.log"
+LOG_FILE = "chronicle.log"
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.INFO,
@@ -51,7 +51,7 @@ def get_download_queue():
         return []
 
 def monitor_next_episodes(series_id, current_episode, season_number, download_queue):
-    """Ensures the next 5 consecutive episodes are monitored and triggers search."""
+    """Ensures the next consecutive episodes are monitored and triggers search."""
     try:
         log_info(f"Fetching episodes for Series ID: {series_id}...")
         episodes_response = requests.get(
@@ -67,7 +67,7 @@ def monitor_next_episodes(series_id, current_episode, season_number, download_qu
         sorted_episodes = sorted(episodes, key=lambda e: (e['seasonNumber'], e['episodeNumber']))
 
         episodes_to_update = []
-        total_checked = 0  # Tracks how many episodes we've processed (up to 5)
+        total_checked = 0  # Tracks how many episodes we've processed
         next_episode = current_episode + 1
 
         while total_checked < EPISODES_TO_MONITOR:
@@ -81,7 +81,7 @@ def monitor_next_episodes(series_id, current_episode, season_number, download_qu
             )
 
             if not episode_found:
-                # If no episode is found in the current season, stop checking
+                # Stop if no episode is found
                 break
 
             # If the episode isn't monitored or downloaded, add it to the update list
@@ -166,7 +166,8 @@ def main():
                 series_response = requests.get(
                     f"{SONARR_API_URL}/series/lookup",
                     headers={"X-Api-Key": SONARR_API_KEY},
-                    params={"term": f"tvdb:{tvdb_id}"}
+                    params={"term": f"tvdb:{tvdb_id}"},
+                    timeout=10
                 )
                 series_response.raise_for_status()
                 series_data = series_response.json()
@@ -178,20 +179,23 @@ def main():
                     title_response = requests.get(
                         f"{SONARR_API_URL}/series/lookup",
                         headers={"X-Api-Key": SONARR_API_KEY},
-                        params={"term": title}
+                        params={"term": title},
+                        timeout=10
                     )
                     title_response.raise_for_status()
                     title_results = title_response.json()
 
                     matching_series = next((s for s in title_results if s.get('title', '').lower() == title.lower()), None)
 
-                if matching_series:
+                if matching_series and 'id' in matching_series:
                     series_id = matching_series['id']
                     monitor_next_episodes(series_id, current_episode, season_number, download_queue)
                 else:
                     log_info(f"Series not found in Sonarr for TVDB ID {tvdb_id} or title {title}. Skipping...")
             except requests.exceptions.RequestException as e:
                 log_error(f"Error processing session: {e}")
+            except KeyError as e:
+                log_error(f"Unexpected data structure: {e}")
 
         log_info("Sleeping for 60 seconds...")
         time.sleep(60)
