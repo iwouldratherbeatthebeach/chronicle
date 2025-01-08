@@ -14,7 +14,7 @@ EPISODES_TO_MONITOR = 5  # Number of episodes to monitor after the current one
 WATCHED_PERCENTAGE = 70  # Trigger when watched percentage exceeds this
 
 # Logging configuration
-LOG_FILE = "chronicle.log"
+LOG_FILE = "tautulli_sonarr.log"
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.INFO,
@@ -51,8 +51,9 @@ def get_download_queue():
         return []
 
 def monitor_next_episodes(series_id, current_episode, season_number, download_queue):
-    """Enables monitoring and triggers search for the next episodes."""
+    """Ensures the next 5 consecutive episodes are monitored and triggers search."""
     try:
+        log_info(f"Fetching episodes for Series ID: {series_id}...")
         episodes_response = requests.get(
             f"{SONARR_API_URL}/episode",
             headers={"X-Api-Key": SONARR_API_KEY},
@@ -62,35 +63,74 @@ def monitor_next_episodes(series_id, current_episode, season_number, download_qu
         episodes_response.raise_for_status()
         episodes = episodes_response.json()
 
-        episodes_to_update = [
-            ep for ep in episodes
-            if ep['seasonNumber'] == season_number
-            and current_episode < ep['episodeNumber'] <= current_episode + EPISODES_TO_MONITOR
-            and not ep['hasFile']
-            and ep['id'] not in [item['episodeId'] for item in download_queue if 'episodeId' in item]
-        ]
+        # Sort episodes by season and episode number
+        sorted_episodes = sorted(episodes, key=lambda e: (e['seasonNumber'], e['episodeNumber']))
 
-        for ep in episodes_to_update:
-            payload = {"monitored": True}
-            update_response = requests.put(
-                f"{SONARR_API_URL}/episode/{ep['id']}",
-                headers={"X-Api-Key": SONARR_API_KEY},
-                json=payload
+        episodes_to_update = []
+        total_checked = 0  # Tracks how many episodes we've processed (up to 5)
+        next_episode = current_episode + 1
+
+        while total_checked < EPISODES_TO_MONITOR:
+            # Find the episode corresponding to the next one
+            episode_found = next(
+                (
+                    ep for ep in sorted_episodes
+                    if ep['seasonNumber'] == season_number and ep['episodeNumber'] == next_episode
+                ),
+                None
             )
-            update_response.raise_for_status()
+
+            if not episode_found:
+                # If no episode is found in the current season, stop checking
+                break
+
+            # If the episode isn't monitored or downloaded, add it to the update list
+            if not episode_found['monitored'] and not episode_found['hasFile']:
+                episodes_to_update.append(episode_found)
+
+            # Move to the next episode
+            next_episode += 1
+            total_checked += 1
 
         if episodes_to_update:
-            log_info(f"Monitoring enabled for {len(episodes_to_update)} episodes starting from Episode {current_episode + 1}.")
-            search_payload = {"name": "EpisodeSearch", "seriesId": series_id, "episodeIds": [ep['id'] for ep in episodes_to_update]}
-            search_response = requests.post(
-                f"{SONARR_API_URL}/command",
-                headers={"X-Api-Key": SONARR_API_KEY},
-                json=search_payload
+            # Update the selected episodes to be monitored
+            for ep in episodes_to_update:
+                payload = {"monitored": True}
+                try:
+                    update_response = requests.put(
+                        f"{SONARR_API_URL}/episode/{ep['id']}",
+                        headers={"X-Api-Key": SONARR_API_KEY},
+                        json=payload,
+                        timeout=10
+                    )
+                    update_response.raise_for_status()
+                except requests.exceptions.RequestException as e:
+                    log_error(f"Failed to enable monitoring for Episode {ep['seasonNumber']}x{ep['episodeNumber']}: {e}")
+
+            # Log the episodes marked for monitoring
+            episodes_str = ', '.join(
+                f"{ep['seasonNumber']}x{ep['episodeNumber']}" for ep in episodes_to_update
             )
-            search_response.raise_for_status()
-            log_info("Search triggered for monitored episodes.")
+            log_info(f"Season {season_number}: Episodes {episodes_str} marked for monitoring.")
+
+            # Trigger search for the monitored episodes
+            search_payload = {
+                "name": "EpisodeSearch",
+                "episodeIds": [ep['id'] for ep in episodes_to_update],
+            }
+            try:
+                search_response = requests.post(
+                    f"{SONARR_API_URL}/command",
+                    headers={"X-Api-Key": SONARR_API_KEY},
+                    json=search_payload,
+                    timeout=10
+                )
+                search_response.raise_for_status()
+                log_info("Search triggered for monitored episodes.")
+            except requests.exceptions.RequestException as e:
+                log_error(f"Error triggering search for episodes: {e}")
         else:
-            log_info("No new episodes to monitor or search.")
+            log_info("No new episodes to monitor.")
     except requests.exceptions.RequestException as e:
         log_error(f"Error during monitor or search process: {e}")
 
