@@ -47,8 +47,10 @@ This Python script integrates **Tautulli** and **Sonarr** to automate the monito
      - `SONARR_API_KEY`
 
 4. Customizable Settings:
-   - MONITOR_ENTIRE_SEASON: Set to True to monitor the entire season, or False to monitor only selected episodes.
-   - EPISODES_TO_MONITOR: Define the number of episodes to monitor after the current one. Default is 5.
+   - MONITOR_ENTIRE_SERIES: Set to True to monitor all episodes of a series, or False to use other configurations.
+   - MONITOR_NEXT_SEASON: Set to True to monitor the rest of the current season and the next season.
+   - MONITOR_ENTIRE_SEASON: Set to True to monitor the rest of the current season.
+   - EPISODES_TO_MONITOR: Define the number of episodes to monitor beyond the current episode. Default is 5.
    - WATCHED_PERCENTAGE: Define the watched percentage threshold to trigger monitoring. Default is 70.
 
 ---
