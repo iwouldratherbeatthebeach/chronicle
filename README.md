@@ -33,12 +33,7 @@ This Python script integrates **Tautulli** and **Sonarr** to automate the monito
    cd chronicle
    ```
 
-2. Install the required dependencies:
-   ```bash
-   pip install requests
-   ```
-
-3. Configure the script:
+2. Configure the script:
    - Open the script file in a text editor.
    - Replace the placeholders with your server information:
      - `TAUTULLI_API_URL`
@@ -46,7 +41,7 @@ This Python script integrates **Tautulli** and **Sonarr** to automate the monito
      - `SONARR_API_URL`
      - `SONARR_API_KEY`
 
-4. Customizable Settings:
+3. Customizable Settings:
    - MONITOR_ENTIRE_SERIES: Set to True to monitor all episodes of a series, or False to use other configurations.
    - MONITOR_NEXT_SEASON: Set to True to monitor the rest of the current season and the next season.
    - MONITOR_ENTIRE_SEASON: Set to True to monitor the rest of the current season.
@@ -65,7 +60,7 @@ This Python script integrates **Tautulli** and **Sonarr** to automate the monito
 2. The script will:
    - Fetch current activity from Tautulli.
    - Match series with Sonarr by TVDB ID or title.
-   - Enable monitoring for the next 5 episodes.
+   - Enable monitoring for the next configured number of episodes or season(s).
    - Trigger searches for the monitored episodes.
 
 ---
